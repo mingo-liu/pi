@@ -927,7 +927,7 @@ export class Editor implements Component, Focusable {
 				this.addNewLine();
 				return;
 			}
-
+			// 用户触发提交按键后，编辑器调用 submitValue()
 			this.submitValue();
 			return;
 		}

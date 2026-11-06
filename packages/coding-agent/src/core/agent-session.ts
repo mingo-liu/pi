@@ -1941,8 +1941,10 @@ export class AgentSession {
 		// are dropped, so a tool that never registers does not stay pending.
 		this._pendingToolNames.clear();
 		try {
+			// 进入 agent run loop
 			await this.agent.prompt(messages);
 			while (!this._agentRunAbortRequested) {
+				// _agentRunAbortRequested 表示用户是否请求取消这次会话层运行
 				if (await this._handlePostAgentRun()) {
 					if (this._agentRunAbortRequested) break;
 					await this.agent.continue();
@@ -2144,6 +2146,7 @@ export class AgentSession {
 		// Handle extension commands first (execute immediately, even during streaming)
 		// Extension commands manage their own LLM interaction via pi.sendMessage()
 		if (expandPromptTemplates && text.startsWith("/")) {
+			// 转而查看并执行扩展命令
 			const handled = await this._tryExecuteExtensionCommand(text);
 			if (handled) {
 				// Extension command executed, no prompt to send
@@ -2246,6 +2249,7 @@ export class AgentSession {
 		const commandName = spaceIndex === -1 ? text.slice(1) : text.slice(1, spaceIndex);
 		const args = spaceIndex === -1 ? "" : text.slice(spaceIndex + 1);
 
+		// 返回的包含 handler 处理函数的命令对象
 		const command = this._extensionRunner.getCommand(commandName);
 		if (!command) return false;
 
@@ -2253,6 +2257,7 @@ export class AgentSession {
 		const ctx = this._extensionRunner.createCommandContext();
 
 		try {
+			// 执行命令对应的处理函数
 			await command.handler(args, ctx);
 			return true;
 		} catch (err) {

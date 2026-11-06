@@ -1121,6 +1121,7 @@ export class InteractiveMode {
 
 		// Enable the remaining input handlers only after managed-tool setup completes.
 		this.setupKeyHandlers();
+		// 注册：把处理函数保存到编辑器属性中
 		this.setupEditorSubmitHandler();
 		this.ui.requestRender();
 
@@ -1281,6 +1282,8 @@ export class InteractiveMode {
 			const userInput = await this.getUserInput();
 			try {
 				await this.session.prompt(userInput);
+				// 到这里，表示本次会话层任务已完成。
+				// 随后进入下一次循环，再等待用户输入。
 			} catch (error: unknown) {
 				const errorMessage = error instanceof Error ? error.message : "Unknown error occurred";
 				this.showError(errorMessage);
@@ -3283,6 +3286,7 @@ export class InteractiveMode {
 	}
 
 	private setupEditorSubmitHandler(): void {
+		// 设置onSubmit回调函数，当用户提交输入时触发
 		this.defaultEditor.onSubmit = async (text: string) => {
 			text = text.trim();
 			if (!text) return;
@@ -3474,6 +3478,8 @@ export class InteractiveMode {
 			// First, move any pending bash components to chat
 			this.flushPendingBashComponents();
 
+			// 普通输入才交给 onInputCallback，
+			// 让 await getUserInput() 返回用户文本
 			if (this.onInputCallback) {
 				this.onInputCallback(text);
 			} else {
