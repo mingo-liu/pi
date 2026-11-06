@@ -117,19 +117,20 @@ export async function runAgentLoop(
 	streamFn: StreamFn,
 ): Promise<AgentMessage[]> {
 	const initialMessages = declareToolChanges(context, prompts);
-	const newMessages: AgentMessage[] = [...initialMessages];
+	const newMessages: AgentMessage[] = [...initialMessages]; // 本次初始消息
 	const currentContext: AgentContext = {
 		...context,
-		messages: [...context.messages, ...initialMessages],
+		messages: [...context.messages, ...initialMessages], // 历史消息 + 本次初始消息
 	};
 
 	await emit({ type: "agent_start" });
 	await emit({ type: "turn_start" });
 	for (const message of initialMessages) {
-		await emit({ type: "message_start", message });
-		await emit({ type: "message_end", message });
+		await emit({ type: "message_start", message }); // 初始消息开始
+		await emit({ type: "message_end", message }); // 初始消息完成
 	}
 
+	// 进入主循环并返回新增消息
 	await runLoop(currentContext, newMessages, config, signal, emit, streamFn ?? getDefaultStreamFn());
 	return newMessages;
 }
@@ -179,6 +180,7 @@ async function runLoop(
 ): Promise<void> {
 	let currentContext = initialContext;
 	let config = initialConfig;
+	// 上一轮的回复、工具结果等信息；第一轮前不存在
 	let lastCompletedTurn: PrepareNextTurnContext | undefined;
 	let explicitContinuation = false;
 	// Check for steering messages at start (user may have typed while waiting)
@@ -189,13 +191,18 @@ async function runLoop(
 		let hasMoreToolCalls = true;
 
 		// Inner loop: process tool calls and steering messages
+		// while-loop (React-loop)
 		while (hasMoreToolCalls || pendingMessages.length > 0) {
 			let preparedMessages: AgentMessage[] = [];
+			// 判断是否是第一轮消息
 			if (lastCompletedTurn) {
+				// 把上一轮的信息交给上层，让它准备下一轮。例如：压缩历史、更新工具、切换模型或补充消息。
 				const nextTurnSnapshot = await config.prepareNextTurn?.(lastCompletedTurn);
 				if (nextTurnSnapshot) {
 					currentContext = nextTurnSnapshot.context ?? currentContext;
+					// 上层准备下一轮时补充的消息
 					preparedMessages = nextTurnSnapshot.messages ?? [];
+					// 更新模型配置
 					config = {
 						...config,
 						model: nextTurnSnapshot.model ?? config.model,
@@ -210,21 +217,33 @@ async function runLoop(
 				// Preparation can be long-running (for example, compaction). Pick up steering
 				// queued while it ran. Only poll again if the earlier poll returned nothing;
 				// otherwise one-at-a-time mode would deliver two messages in this turn.
+				// 接收准备期间新到达的 steer 消息
+				// 例如：
+				// 上一轮结束：没有取到 steer
+				//     → 开始压缩历史
+				//     → 压缩期间，用户提交“先别改代码”
+				//     → 压缩结束，再从队列取出这条消息
+				//     → 下一次请求模型时一起发送
 				if (pendingMessages.length === 0) {
 					pendingMessages = (await config.getSteeringMessages?.()) || [];
 				}
+				// 通知新一轮开始：这是向上层发送事件，并等待事件处理完成
 				await emit({ type: "turn_start" });
 			}
 
 			// Process prepared and queued messages before the next assistant response.
+			// 在下一次请求模型之前，将补充消息和排队消息加入上下文，并通知上层。
 			for (const message of declareToolChanges(currentContext, [...preparedMessages, ...pendingMessages])) {
 				await emit({ type: "message_start", message });
 				await emit({ type: "message_end", message });
 				currentContext.messages.push(message);
 				newMessages.push(message);
 			}
+			// 清空本轮暂存的排队消息
 			pendingMessages = [];
 
+			// 在实际请求前，再提供一次调整机会
+			// 如果用户在运行期间修改了模型或思考等级，prepareRequest() 可以在下一次请求发出前，把最新设置同步进来。
 			const requestUpdate = await config.prepareRequest?.(
 				{
 					context: currentContext,
@@ -248,9 +267,11 @@ async function runLoop(
 			}
 
 			// Stream assistant response
+			// 请求模型，取得完整回复
 			const message = await streamAssistantResponse(currentContext, config, signal, emit, streamFunction);
 			newMessages.push(message);
 
+			// 如果模型回复标记为失败或取消
 			if (message.stopReason === "error" || message.stopReason === "aborted") {
 				lastCompletedTurn = {
 					message,
@@ -265,6 +286,7 @@ async function runLoop(
 			}
 
 			// Check for tool calls
+			// 提取并执行工具调用
 			const toolCalls = message.content.filter((c) => c.type === "toolCall");
 
 			const toolResults: ToolResultMessage[] = [];
@@ -274,6 +296,8 @@ async function runLoop(
 				// every tool call in the message may carry truncated arguments. Fail
 				// them all instead of executing potentially borked calls.
 				const executedToolBatch =
+					// 表示输出被长度限制截断，工具参数可能不完整
+					// 执行工具调用，executeToolCalls 一次性执行完所有工具后返回
 					message.stopReason === "length"
 						? await failToolCallsFromTruncatedMessage(toolCalls, emit)
 						: await executeToolCalls(currentContext, message, config, signal, emit);
@@ -286,6 +310,7 @@ async function runLoop(
 				}
 			}
 
+			// 保存本轮的信息
 			lastCompletedTurn = {
 				message,
 				toolResults,
@@ -295,19 +320,23 @@ async function runLoop(
 			const decision = await config.finishTurn?.(lastCompletedTurn, signal);
 			await emit({ type: "turn_end", message, toolResults });
 
+			// 立即结束整个运行
 			if (decision?.action === "end") {
 				await emit({ type: "agent_end", messages: newMessages });
 				return;
 			}
 
 			explicitContinuation = decision?.action === "continue";
+			// 检查是否有 steering 消息，或者有工具调用未完成
+			// 如果有 steering 消息，则继续内循环
 			pendingMessages = (await config.getSteeringMessages?.()) || [];
 			if (hasMoreToolCalls || pendingMessages.length > 0) {
 				explicitContinuation = false;
 			}
-		}
+		} // end of inner loop
 
 		// Agent would stop here. Check for follow-up messages.
+		// 如果后续有 follow-up 消息，则继续外循环
 		const followUpMessages = (await config.getFollowUpMessages?.()) || [];
 		if (followUpMessages.length > 0) {
 			// Set as pending so inner loop processes them
@@ -317,6 +346,7 @@ async function runLoop(
 		}
 
 		// No natural request was selected, so fulfill the continuation decision with one context-only turn.
+		// 虽然没有工具结果、steer 或 followUp 触发下一轮，但 finishTurn() 明确要求继续，因此再请求一次模型。
 		if (explicitContinuation) {
 			explicitContinuation = false;
 			continue;
@@ -324,8 +354,9 @@ async function runLoop(
 
 		// No more messages, exit
 		break;
-	}
+	} // end of outer loop
 
+	// 本次任务完成，通知上层
 	await emit({ type: "agent_end", messages: newMessages });
 }
 

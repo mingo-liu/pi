@@ -386,6 +386,8 @@ export class Agent {
 			);
 		}
 		const messages = this.normalizePromptInput(input, images);
+		// 启动并等待本次运行完成
+		// 这里的 await 等待的是整个 Agent 运行，其中可能包含多轮模型请求和工具调用。
 		await this.runPromptMessages(messages);
 	}
 
@@ -444,12 +446,12 @@ export class Agent {
 	): Promise<void> {
 		await this.runWithLifecycle(async (signal) => {
 			await runAgentLoop(
-				messages,
-				this.createContextSnapshot(),
-				this.createLoopConfig(options),
+				messages, // 本次提交的新消息
+				this.createContextSnapshot(), // 提供已有消息和可用工具
+				this.createLoopConfig(options), // 提供模型、回调和消息队列等配置
 				(event) => this.processEvents(event),
-				signal,
-				this.streamFunction,
+				signal, // 传递取消运行的信号
+				this.streamFunction, // 实际请求模型并获取流式响应的函数
 			);
 		});
 	}
@@ -519,6 +521,7 @@ export class Agent {
 			throw new Error("Agent is already processing.");
 		}
 
+		// 创建取消控制器和完成通知
 		const abortController = new AbortController();
 		let resolvePromise = () => {};
 		const promise = new Promise<void>((resolve) => {
@@ -526,15 +529,18 @@ export class Agent {
 		});
 		this.activeRun = { promise, resolve: resolvePromise, abortController };
 
+		// 初始化运行状态
 		this._state.isStreaming = true;
 		this._state.streamingMessage = undefined;
 		this._state.errorMessage = undefined;
 
 		try {
+			// 执行传入的异步函数
 			await executor(abortController.signal);
 		} catch (error) {
 			await this.handleRunFailure(error, abortController.signal.aborted);
 		} finally {
+			// 无论执行结果如何，都清理状态
 			this.finishRun();
 		}
 	}
