@@ -304,8 +304,11 @@ async function runLoop(
 				toolResults.push(...executedToolBatch.messages);
 				hasMoreToolCalls = !executedToolBatch.terminate;
 
+				// 遍历工具结果，将其添加到当前上下文和新消息中
 				for (const result of toolResults) {
+					// 历史消息及本次消息，用于后续模型请求
 					currentContext.messages.push(result);
+					// 仅本次运行新增的消息，用于返回本次执行记录
 					newMessages.push(result);
 				}
 			}
@@ -320,7 +323,7 @@ async function runLoop(
 			const decision = await config.finishTurn?.(lastCompletedTurn, signal);
 			await emit({ type: "turn_end", message, toolResults });
 
-			// 立即结束整个运行
+			// 立即结束整个运行，程序主动控制停止的扩展能力
 			if (decision?.action === "end") {
 				await emit({ type: "agent_end", messages: newMessages });
 				return;
@@ -344,6 +347,9 @@ async function runLoop(
 			pendingMessages = followUpMessages;
 			continue;
 		}
+
+		// 如果此时用户输入 steer 消息，会话层会调用 agent.continue() 启动新的底层运行。
+		// ...
 
 		// No natural request was selected, so fulfill the continuation decision with one context-only turn.
 		// 虽然没有工具结果、steer 或 followUp 触发下一轮，但 finishTurn() 明确要求继续，因此再请求一次模型。

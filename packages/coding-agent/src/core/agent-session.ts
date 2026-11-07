@@ -1970,8 +1970,10 @@ export class AgentSession {
 			await this.agent.prompt(messages);
 			while (!this._agentRunAbortRequested) {
 				// _agentRunAbortRequested 表示用户是否请求取消这次会话层运行
+				// 如果原来的 runLoop() 已经来不及取最后输入的 steer 消息，会话层的 _handlePostAgentRun() 会检查遗留队列，再调用 agent.continue()。
 				if (await this._handlePostAgentRun()) {
 					if (this._agentRunAbortRequested) break;
+					// 取出消息，启动新的底层运行-RunLoop
 					await this.agent.continue();
 					continue;
 				}
@@ -2083,6 +2085,7 @@ export class AgentSession {
 
 		// The low-level loop drains both queues before agent_end. Messages queued by
 		// agent_end handlers require a fresh run before pre-settlement handlers fire.
+		// 底层 loop 已经结束，但收尾期间是否又有新消息入队，需要先再运行一次 Agent。
 		return !this._agentRunAbortRequested && this.agent.hasQueuedMessages();
 	}
 
