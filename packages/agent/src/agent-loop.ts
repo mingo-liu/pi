@@ -267,7 +267,7 @@ async function runLoop(
 			}
 
 			// Stream assistant response
-			// 请求模型，取得完整回复
+			// 请求模型，取得完整回复，然后再执行工具
 			const message = await streamAssistantResponse(currentContext, config, signal, emit, streamFunction);
 			newMessages.push(message);
 
@@ -446,6 +446,7 @@ async function streamAssistantResponse(
 	const resolvedApiKey =
 		(config.getApiKey ? await config.getApiKey(config.model.provider) : undefined) || config.apiKey;
 
+	// 调用模型，取得响应流
 	const response = await streamFunction(config.model, llmContext, {
 		...config,
 		apiKey: resolvedApiKey,
@@ -458,6 +459,7 @@ async function streamAssistantResponse(
 	let partialMessage: AssistantMessage | null = null;
 	let addedPartial = false;
 
+	// 逐个处理 pi 流式响应事件
 	for await (const event of response) {
 		switch (event.type) {
 			case "start":
@@ -478,7 +480,10 @@ async function streamAssistantResponse(
 			case "toolcall_end":
 				if (partialMessage) {
 					partialMessage = event.partial;
+					// 代码不断替换上下文中的同一个消息位置，不会保存成两条 assistant 消息。
+					// 上下文中只有一条正在生成的 assistant 消息
 					context.messages[context.messages.length - 1] = partialMessage;
+					// 收到一个增量事件，发出消息更新事件，tui收到事件后显示增量输出
 					await emit({
 						type: "message_update",
 						assistantMessageEvent: event,
@@ -504,6 +509,7 @@ async function streamAssistantResponse(
 		}
 	}
 
+	// 等待并取得本次模型响应的最终完整消息
 	const finalMessage = await result();
 	if (addedPartial) {
 		context.messages[context.messages.length - 1] = finalMessage;
@@ -512,6 +518,7 @@ async function streamAssistantResponse(
 		await emit({ type: "message_start", message: { ...finalMessage } });
 	}
 	await emit({ type: "message_end", message: finalMessage });
+	// 一次模型请求完成后得到的完整 assistant 消息对象。
 	return finalMessage;
 }
 

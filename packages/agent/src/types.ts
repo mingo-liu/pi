@@ -23,18 +23,24 @@ import type { Static } from "@earendil-works/pi-schema";
  * The loop passes a normalized transcript: the system prompt and tool
  * declarations are carried by the transcript's system messages, never by
  * `context.systemPrompt` or `context.tools`.
+ * 系统提示词和工具声明统一放在 context.messages 的 system 消息中，不使用 context.systemPrompt 和 context.tools。
  *
  * Contract:
  * - Must not throw or return a rejected promise for request/model/runtime failures.
  * - Must return an AssistantMessageEventStream.
  * - Failures must be encoded in the returned stream via protocol events and a
  *   final AssistantMessage with stopReason "error" or "aborted" and errorMessage.
+ * 请求、模型或运行时失败时，不直接抛异常，也不返回 rejected Promise；通过流中的事件报告失败，最终消息包含：
+ * {
+ *   stopReason: "error" 或 "aborted",
+ *   errorMessage: "失败原因"
+ * }
  */
 export type StreamFn = (
-	model: Model<Api>,
-	context: TranscriptContext,
-	options?: SimpleStreamOptions,
-) => AssistantMessageEventStream | Promise<AssistantMessageEventStream>;
+	model: Model<Api>, // 模型
+	context: TranscriptContext, // 上下文
+	options?: SimpleStreamOptions, // 流式请求选项
+) => AssistantMessageEventStream | Promise<AssistantMessageEventStream>; // 同步返回流对象 ｜ 异步返回流对象
 
 /**
  * Configuration for how tool calls from a single assistant message are executed.

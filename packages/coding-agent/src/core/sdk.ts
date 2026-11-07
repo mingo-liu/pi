@@ -409,6 +409,7 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 			messages: existingSession.messages,
 		},
 		convertToLlm: convertToLlmWithBlockImages,
+		// 创建 agent 时，设置流式请求函数
 		streamFn: async (model, context, options) => {
 			const requestOptions = buildRequestOptions(options);
 			// Compaction and summaries use their own routing ids; only session requests

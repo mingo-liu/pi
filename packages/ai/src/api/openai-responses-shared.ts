@@ -501,8 +501,11 @@ type ResponsesOutputSlot =
 type ToolCallOutputSlot = Extract<ResponsesOutputSlot, { type: "toolCall" }>;
 
 export async function processResponsesStream<TApi extends Api>(
+	// 已经解析成对象的 OpenAI 事件流
 	openaiStream: AsyncIterable<ResponseStreamEvent>,
+	// 正在组装的 Pi assistant 消息
 	output: AssistantMessage,
+	// 供 agent-loop 读取的 Pi 事件流
 	stream: AssistantMessageEventStream,
 	model: Model<TApi>,
 	options?: OpenAIResponsesStreamOptions,
@@ -695,6 +698,7 @@ export async function processResponsesStream<TApi extends Api>(
 				partial: output,
 			});
 		} else if (event.type === "response.reasoning_text.delta") {
+			// 收到文本增量：追加内容并发出事件
 			const slot = getSlot(event.output_index, "thinking");
 			if (!slot) continue;
 			slot.block.thinking += event.delta;
@@ -762,8 +766,10 @@ export async function processResponsesStream<TApi extends Api>(
 				});
 				outputSlots.delete(event.output_index);
 			} else if (item.type === "message" && slot?.type === "text") {
+				// 收到文本完成事件：保存最终文本并发出事件
 				slot.block.text = item.content?.map((c) => (c.type === "output_text" ? c.text : c.refusal)).join("") || "";
 				slot.block.textSignature = encodeTextSignatureV1(item.id, item.phase ?? undefined);
+				// 生产者：适配层收到模型事件后，写入 Pi 事件流
 				stream.push({
 					type: "text_end",
 					contentIndex: slot.contentIndex,
